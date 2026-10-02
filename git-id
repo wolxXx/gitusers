@@ -3,7 +3,7 @@
 set -euo pipefail
 
 STORE="${GIT_ID_FILE:-$HOME/.git-identities}"
-PROG="${0##*/}"
+PROG="git id"
 
 if [[ -t 1 ]]; then
   B=$'\e[1m' D=$'\e[2m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' N=$'\e[0m'
@@ -269,7 +269,7 @@ case $cmd in
   use|u|set)         cmd_use "$@" ;;
   unset)             cmd_unset "$@" ;;
   help|-h|--help)    usage ;;
-  *)                 # Shorthand: "git-id work" == "git-id use work"
+  *)                 # Shorthand: "git id work" == "git id use work"
                      if load && resolve "$cmd"; then cmd_use "$cmd" "$@"
                      else usage >&2; exit 1; fi ;;
 esac
