@@ -16,29 +16,35 @@ From the repository root:
 sudo install -m 755 git-id /usr/local/bin/git-id
 ```
 
-Because the script is named `git-id` and is on your `PATH`, you can also call it as `git id`.
+That's it – it now works as a regular Git subcommand:
+
+```sh
+git id
+```
+
+Git automatically runs any executable named `git-<name>` on your `PATH` as `git <name>`, so no alias or extra configuration is needed.
 
 ## Usage
 
 ```sh
-git-id                              # Show status: repo, local/global/active identity + saved list
-git-id list                         # List saved identities
-git-id add                          # Add interactively (current git config is pre-filled)
-git-id add work "Max Muster" max@company.com
-git-id use work                     # Inside a repo: local; outside: global
-git-id use 2 -g                     # Select by number, explicitly global (-l = local)
-git-id use                          # Interactive selection
-git-id work                         # Shorthand for "git-id use work"
-git-id rm work                      # Delete with confirmation (-f skips it)
-git-id unset [-g|-l]                # Remove user.name/user.email from the config
-git-id help                         # Show help
+git id                              # Show status: repo, local/global/active identity + saved list
+git id list                         # List saved identities
+git id add                          # Add interactively (current git config is pre-filled)
+git id add work "Max Muster" max@company.com
+git id use work                     # Inside a repo: local; outside: global
+git id use 2 -g                     # Select by number, explicitly global (-l = local)
+git id use                          # Interactive selection
+git id work                         # Shorthand for "git id use work"
+git id rm work                      # Delete with confirmation (-f skips it)
+git id unset [-g|-l]                # Remove user.name/user.email from the config
+git id help                         # Show help
 ```
 
 ### Commands
 
 | Command                          | Aliases                     | Description                                                     |
 |----------------------------------|-----------------------------|-----------------------------------------------------------------|
-| `git-id`                         | `status`, `st`, `s`         | Show the current identity and all saved identities              |
+| `git id`                         | `status`, `st`, `s`         | Show the current identity and all saved identities              |
 | `list`                           | `ls`, `l`                   | List saved identities                                           |
 | `add [alias] [name] [email]`     | `a`, `new`                  | Add an identity; missing values are prompted for                |
 | `use [alias\|nr] [-g\|-l]`       | `u`, `set`                  | Apply an identity; without an argument, choose from a list      |
@@ -92,7 +98,7 @@ export GIT_ID_FILE="$HOME/.config/git-identities"
 
 ### Status hint
 
-If the active identity is not saved, the status output says so and suggests `git-id add`.
+If the active identity is not saved, the status output says so and suggests `git id add`.
 
 ### Editing
 
