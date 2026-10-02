@@ -1,0 +1,275 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+STORE="${GIT_ID_FILE:-$HOME/.git-identities}"
+PROG="${0##*/}"
+
+if [[ -t 1 ]]; then
+  B=$'\e[1m' D=$'\e[2m' G=$'\e[32m' Y=$'\e[33m' R=$'\e[31m' N=$'\e[0m'
+else
+  B='' D='' G='' Y='' R='' N=''
+fi
+
+die()  { printf '%sError:%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+info() { printf '%s✔%s %s\n' "$G" "$N" "$*"; }
+
+command -v git >/dev/null || die "git is not installed."
+
+usage() {
+  cat <<EOF
+${B}$PROG${N} – manage Git identities
+
+${B}Usage:${N}
+  $PROG                         Show status (current identity + saved ones)
+  $PROG list                    List saved identities
+  $PROG add [alias] [name] [email]
+                                Add a new identity (missing values are prompted for)
+  $PROG rm <alias|nr> [-f]      Delete an identity (-f: no confirmation)
+  $PROG use [alias|nr] [-g|-l]  Set an identity (no argument: interactive selection)
+                                  -l  local to the current repo (default inside a repo)
+                                  -g  global (default outside a repo)
+  $PROG unset [-g|-l]           Remove user.name/user.email from the config
+  $PROG help                    Show this help
+
+Storage: ${STORE/#$HOME/\~}
+EOF
+}
+
+# ----------------------------------------------------------------- Storage --
+
+ensure_store() {
+  [[ -f $STORE ]] || (umask 077 && : >"$STORE")
+}
+
+load() {
+  ALIASES=() NAMES=() EMAILS=()
+  [[ -f $STORE ]] || return 0
+  local a n e
+  while IFS=$'\t' read -r a n e || [[ -n $a ]]; do
+    [[ -z $a || $a == \#* ]] && continue
+    ALIASES+=("$a") NAMES+=("$n") EMAILS+=("$e")
+  done <"$STORE"
+}
+
+# Sets IDX to the index of the identity (alias or 1-based number)
+resolve() {
+  local key=$1 i
+  if [[ $key =~ ^[0-9]+$ ]] && ((key >= 1 && key <= ${#ALIASES[@]})); then
+    IDX=$((key - 1))
+    return 0
+  fi
+  for i in "${!ALIASES[@]}"; do
+    if [[ ${ALIASES[i]} == "$key" ]]; then IDX=$i; return 0; fi
+  done
+  return 1
+}
+
+# ----------------------------------------------------------------- Helpers --
+
+in_repo() { git rev-parse --is-inside-work-tree &>/dev/null; }
+
+cfg() { git config "$@" 2>/dev/null || true; }
+
+fmt_id() {
+  if [[ -z $1 && -z $2 ]]; then printf '%s(not set)%s' "$D" "$N"
+  else printf '%s <%s>' "${1:-?}" "${2:-?}"; fi
+}
+
+ask() { # ask VAR "Question" [default]
+  local __ans
+  read -rep "$2: " -i "${3-}" __ans || { echo; die "Aborted."; }
+  printf -v "$1" '%s' "$__ans"
+}
+
+# Determines the scope (--local/--global) from flags or context
+parse_scope() {
+  SCOPE=''
+  ARGS=()
+  local a
+  for a in "$@"; do
+    case $a in
+      -g|--global) SCOPE=--global ;;
+      -l|--local)  SCOPE=--local ;;
+      -f|--force)  FORCE=1 ;;
+      -*)          die "Unknown option: $a" ;;
+      *)           ARGS+=("$a") ;;
+    esac
+  done
+  if [[ -z $SCOPE ]]; then
+    if in_repo; then SCOPE=--local; else SCOPE=--global; fi
+  fi
+  if [[ $SCOPE == --local ]] && ! in_repo; then
+    die "Not inside a Git repository – use -g for global."
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------- Commands --
+
+print_list() {
+  local cur_name=${1-} cur_email=${2-} g_name=${3-} g_email=${4-} l_name=${5-} l_email=${6-}
+  if ((${#ALIASES[@]} == 0)); then
+    printf '  %sNone saved. Add one with: %s add%s\n' "$D" "$PROG" "$N"
+    return
+  fi
+  local i w=5 tags
+  for i in "${!ALIASES[@]}"; do ((${#ALIASES[i]} > w)) && w=${#ALIASES[i]}; done
+  for i in "${!ALIASES[@]}"; do
+    tags=()
+    [[ ${NAMES[i]} == "$l_name" && ${EMAILS[i]} == "$l_email" ]] && tags+=(local)
+    [[ ${NAMES[i]} == "$g_name" && ${EMAILS[i]} == "$g_email" ]] && tags+=(global)
+    if [[ ${NAMES[i]} == "$cur_name" && ${EMAILS[i]} == "$cur_email" ]]; then
+      printf '  %s●%s ' "$G" "$N"
+    else
+      printf '    '
+    fi
+    printf '%2d) %s%-*s%s  %s <%s>' "$((i + 1))" "$B" "$w" "${ALIASES[i]}" "$N" "${NAMES[i]}" "${EMAILS[i]}"
+    ((${#tags[@]})) && printf '  %s[%s]%s' "$D" "$(IFS=,; echo "${tags[*]}")" "$N"
+    printf '\n'
+  done
+}
+
+cmd_status() {
+  load
+  local g_name g_email l_name='' l_email='' e_name e_email scope=''
+  g_name=$(cfg --global --get user.name)
+  g_email=$(cfg --global --get user.email)
+  e_name=$(cfg --get user.name)
+  e_email=$(cfg --get user.email)
+
+  printf '%sCurrent Git identity%s\n' "$B" "$N"
+  if in_repo; then
+    l_name=$(cfg --local --get user.name)
+    l_email=$(cfg --local --get user.email)
+    printf '  Repository: %s\n' "$(git rev-parse --show-toplevel)"
+    printf '  Local:      %s\n' "$(fmt_id "$l_name" "$l_email")"
+  fi
+  printf '  Global:     %s\n' "$(fmt_id "$g_name" "$g_email")"
+  if [[ -n $e_name || -n $e_email ]]; then
+    scope=$(cfg --show-scope --get user.email | cut -f1)
+    [[ -z $scope ]] && scope=$(cfg --show-scope --get user.name | cut -f1)
+  fi
+  printf '  %sActive:     %s%s' "$B" "$(fmt_id "$e_name" "$e_email")" "$N"
+  [[ -n $scope ]] && printf '  %s(%s)%s' "$D" "$scope" "$N"
+  printf '\n'
+
+  if [[ -n $e_name || -n $e_email ]]; then
+    local known=0 i
+    for i in "${!ALIASES[@]}"; do
+      [[ ${NAMES[i]} == "$e_name" && ${EMAILS[i]} == "$e_email" ]] && known=1
+    done
+    ((known)) || printf '  %sNote: the active identity is not saved (%s add)%s\n' "$Y" "$PROG" "$N"
+  fi
+
+  printf '\n%sSaved identities%s %s(%s)%s\n' "$B" "$N" "$D" "${STORE/#$HOME/\~}" "$N"
+  print_list "$e_name" "$e_email" "$g_name" "$g_email" "$l_name" "$l_email"
+}
+
+cmd_list() {
+  load
+  local l_name='' l_email=''
+  if in_repo; then
+    l_name=$(cfg --local --get user.name)
+    l_email=$(cfg --local --get user.email)
+  fi
+  print_list "$(cfg --get user.name)" "$(cfg --get user.email)" \
+    "$(cfg --global --get user.name)" "$(cfg --global --get user.email)" \
+    "$l_name" "$l_email"
+}
+
+cmd_add() {
+  load
+  local alias=${1-} name=${2-} email=${3-}
+  (($# > 3)) && die "Too many arguments. Quote values that contain spaces."
+
+  [[ -n $alias ]] || ask alias "Alias (e.g. work, private)"
+  [[ $alias =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid alias '$alias' (allowed: A-Z a-z 0-9 . _ -)."
+  [[ $alias =~ ^[0-9]+$ ]] && die "Alias must not consist of digits only."
+  if resolve "$alias" && [[ ${ALIASES[IDX]} == "$alias" ]]; then
+    die "Alias '$alias' already exists."
+  fi
+
+  [[ -n $name ]]  || ask name  "Name"  "$(cfg --get user.name)"
+  [[ -n $email ]] || ask email "Email" "$(cfg --get user.email)"
+
+  [[ -n $name ]] || die "Name must not be empty."
+  [[ $email =~ ^[^[:space:]@]+@[^[:space:]@]+$ ]] || die "Invalid email '$email'."
+  [[ $name$email == *$'\t'* || $name$email == *$'\n'* ]] && die "Tabs/newlines are not allowed."
+
+  ensure_store
+  printf '%s\t%s\t%s\n' "$alias" "$name" "$email" >>"$STORE"
+  info "Identity '$alias' saved: $name <$email>"
+}
+
+cmd_rm() {
+  FORCE=0
+  local args=() a
+  for a in "$@"; do
+    case $a in
+      -f|--force) FORCE=1 ;;
+      -*) die "Unknown option: $a" ;;
+      *) args+=("$a") ;;
+    esac
+  done
+  ((${#args[@]} == 1)) || die "Usage: $PROG rm <alias|nr> [-f]"
+
+  load
+  resolve "${args[0]}" || die "Identity '${args[0]}' not found."
+  local alias=${ALIASES[IDX]}
+
+  if ((!FORCE)); then
+    local ans
+    read -rp "Delete identity '$alias' ($(fmt_id "${NAMES[IDX]}" "${EMAILS[IDX]}"))? [y/N] " ans || ans=''
+    [[ $ans =~ ^[yYjJ]$ ]] || { echo "Aborted."; return 0; }
+  fi
+
+  local tmp
+  tmp=$(mktemp "$STORE.XXXXXX")
+  awk -F'\t' -v a="$alias" '$1 != a' "$STORE" >"$tmp" && mv "$tmp" "$STORE"
+  info "Identity '$alias' deleted."
+}
+
+cmd_use() {
+  parse_scope "$@"
+  ((${#ARGS[@]} <= 1)) || die "Usage: $PROG use [alias|nr] [-g|-l]"
+  load
+  ((${#ALIASES[@]})) || die "No identities saved. Run '$PROG add' first."
+
+  local key=${ARGS[0]-}
+  if [[ -z $key ]]; then
+    cmd_list
+    ask key "Number or alias"
+    [[ -n $key ]] || die "Aborted."
+  fi
+  resolve "$key" || die "Identity '$key' not found."
+
+  git config "$SCOPE" user.name "${NAMES[IDX]}"
+  git config "$SCOPE" user.email "${EMAILS[IDX]}"
+  info "${ALIASES[IDX]} → ${SCOPE#--}: ${NAMES[IDX]} <${EMAILS[IDX]}>"
+}
+
+cmd_unset() {
+  parse_scope "$@"
+  ((${#ARGS[@]} == 0)) || die "Usage: $PROG unset [-g|-l]"
+  git config "$SCOPE" --unset user.name || true
+  git config "$SCOPE" --unset user.email || true
+  info "user.name/user.email removed (${SCOPE#--})."
+}
+
+# -------------------------------------------------------------------- Main --
+
+cmd=${1-status}
+(($#)) && shift
+case $cmd in
+  status|st|s)       cmd_status ;;
+  list|ls|l)         cmd_list ;;
+  add|a|new)         cmd_add "$@" ;;
+  rm|remove|del|delete) cmd_rm "$@" ;;
+  use|u|set)         cmd_use "$@" ;;
+  unset)             cmd_unset "$@" ;;
+  help|-h|--help)    usage ;;
+  *)                 # Shorthand: "git-id work" == "git-id use work"
+                     if load && resolve "$cmd"; then cmd_use "$cmd" "$@"
+                     else usage >&2; exit 1; fi ;;
+esac
