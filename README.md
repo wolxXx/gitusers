@@ -10,6 +10,12 @@ Save your identities once, then switch between them per repository or globally w
 
 ## Installation
 
+From GitHub:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/wolxXx/gitusers/refs/heads/main/git-id && sudo install -m 755 git-id /usr/local/bin/git-id && rm git-id
+```
+
 From the repository root:
 
 ```sh
